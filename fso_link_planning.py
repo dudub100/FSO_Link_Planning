@@ -170,17 +170,29 @@ st.sidebar.header("2. Hardware Specs")
 tx_power = st.sidebar.number_input("Avg Tx Power (dBm)", value=10.0, step=1.0)
 tx_apt = st.sidebar.number_input("Tx Aperture (m)", value=0.05, step=0.01)
 
-# Physics Check: Diffraction Limit Calculation
+# --- NEW PHYSICS CHECK & DYNAMIC DIVERGENCE LOGIC ---
 min_div_rad = 1.22 * (LAMBDA_NM * 1e-9) / tx_apt
-min_div_mrad = min_div_rad * 1000
+min_div_mrad = float(min_div_rad * 1000)
 
-user_div_mrad = st.sidebar.number_input("Beam Divergence (mrad)", value=max(0.1, float(np.round(min_div_mrad, 3))), step=0.01)
+# Initialize session state so we remember if the user intentionally defocused the beam
+if "user_divergence" not in st.session_state:
+    st.session_state.user_divergence = max(0.1, min_div_mrad)
 
-if user_div_mrad < min_div_mrad:
-    st.sidebar.warning(f"⚠️ Diffraction Limit Reached! A {tx_apt}m lens cannot physically produce a beam tighter than {min_div_mrad:.3f} mrad. Using theoretical minimum.")
-    divergence_mrad = min_div_mrad
-else:
-    divergence_mrad = user_div_mrad
+# Automatically bump the divergence up if the user shrinks the Tx lens too much
+if st.session_state.user_divergence < min_div_mrad:
+    st.session_state.user_divergence = min_div_mrad
+
+divergence_mrad = st.sidebar.number_input(
+    "Beam Divergence (mrad)", 
+    min_value=min_div_mrad,
+    value=st.session_state.user_divergence,
+    step=0.01,
+    help=f"Diffraction limit for a {tx_apt}m lens is {min_div_mrad:.3f} mrad. You can manually increase this to defocus the beam."
+)
+
+# Save the current state
+st.session_state.user_divergence = divergence_mrad
+# ---------------------------------------------------
 
 rx_apt = st.sidebar.number_input("Rx Aperture (m)", value=0.20, step=0.01)
 height_m = st.sidebar.number_input("Tower Height AGL (m)", value=25.0, step=5.0)
