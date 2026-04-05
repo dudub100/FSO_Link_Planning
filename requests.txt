@@ -1,0 +1,10 @@
+streamlit
+folium
+streamlit-folium
+pandas
+numpy
+matplotlib
+requests
+itur
+astropy
+scipy
