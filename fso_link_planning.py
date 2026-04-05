@@ -14,7 +14,6 @@ import astropy.units as u
 # 1. CONSTANTS & PHYSICAL PARAMETERS
 # ==========================================
 LAMBDA_NM = 1550             
-DIVERGENCE_MRAD = 0.1        
 GAS_ATTEN_DB_KM = 0.15       
 C_N2_GROUND = 1e-13          
 
@@ -148,7 +147,6 @@ def calc_fog_loss(vis_km, d_km):
 st.set_page_config(page_title="FSO Link Planner (Pro)", layout="wide")
 st.title("FSO Link Planner: ITU-R & METAR Integration")
 
-# Default coordinates near Rosh Haayin, Israel
 if 'site_a' not in st.session_state: st.session_state.site_a = (32.0945, 34.9566)
 if 'site_b' not in st.session_state: st.session_state.site_b = (32.1100, 34.9700)
 if 'click_mode' not in st.session_state: st.session_state.click_mode = 'A'
@@ -171,6 +169,19 @@ st.sidebar.success(f"**Nearest Airport:** {icao_code}\n\n*{airport_name}*\n\nDis
 st.sidebar.header("2. Hardware Specs")
 tx_power = st.sidebar.number_input("Avg Tx Power (dBm)", value=10.0, step=1.0)
 tx_apt = st.sidebar.number_input("Tx Aperture (m)", value=0.05, step=0.01)
+
+# Physics Check: Diffraction Limit Calculation
+min_div_rad = 1.22 * (LAMBDA_NM * 1e-9) / tx_apt
+min_div_mrad = min_div_rad * 1000
+
+user_div_mrad = st.sidebar.number_input("Beam Divergence (mrad)", value=max(0.1, float(np.round(min_div_mrad, 3))), step=0.01)
+
+if user_div_mrad < min_div_mrad:
+    st.sidebar.warning(f"⚠️ Diffraction Limit Reached! A {tx_apt}m lens cannot physically produce a beam tighter than {min_div_mrad:.3f} mrad. Using theoretical minimum.")
+    divergence_mrad = min_div_mrad
+else:
+    divergence_mrad = user_div_mrad
+
 rx_apt = st.sidebar.number_input("Rx Aperture (m)", value=0.20, step=0.01)
 height_m = st.sidebar.number_input("Tower Height AGL (m)", value=25.0, step=5.0)
 capacity = st.sidebar.selectbox("Capacity (Gbps)", options=[1, 10, 25, 100], index=1)
@@ -200,7 +211,7 @@ if map_data.get("last_clicked"):
 # ==========================================
 distance_km = haversine(lat_a, lon_a, lat_b, lon_b)
 
-geo_loss = calc_geo_loss(distance_km, tx_apt, rx_apt, DIVERGENCE_MRAD)
+geo_loss = calc_geo_loss(distance_km, tx_apt, rx_apt, divergence_mrad)
 gas_loss = -(GAS_ATTEN_DB_KM * distance_km)
 scint_margin = 0.0 if "Femtosecond" in modulation else calc_scintillation_margin(distance_km, height_m)
 
