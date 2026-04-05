@@ -124,7 +124,25 @@ def calc_scintillation_margin(d_km, h_m, p_outage=1e-5):
     return 4.343 * (math.sqrt(-2 * math.log(p_outage)) * math.sqrt(sigma_R2))
 
 def calc_rain_loss(rate_mmhr, d_km):
-    return 1.076 * (rate_mmhr ** 0.67) * d_km
+    """
+    Calculates optical rain attenuation using the Carbonneau model and a 
+    continuous Lin-type effective path length reduction factor to prevent 
+    hard mathematical breaking points in the simulation.
+    """
+    if rate_mmhr <= 0:
+        return 0.0
+        
+    # Baseline specific attenuation (Carbonneau)
+    gamma_rain = 1.076 * (rate_mmhr ** 0.67)
+    
+    # Continuous Path Reduction Factor (Asymptotic rain cell scaling)
+    # The constant 250 controls the rain cell decay rate for FSO.
+    reduction_factor = 1.0 / (1.0 + d_km * (rate_mmhr / 250.0))
+    
+    # Calculate smooth effective distance
+    d_eff = d_km * reduction_factor
+    
+    return gamma_rain * d_eff
 
 def calc_fog_loss(vis_km, d_km):
     if vis_km <= 0: return 999.0
@@ -171,11 +189,9 @@ min_div_mrad = float(min_div_rad * 1000)
 auto_divergence = st.sidebar.checkbox("Auto-calculate Optimal Divergence", value=True)
 
 if auto_divergence:
-    # Lock to the physical limit. Changes automatically as tx_apt changes.
     divergence_mrad = min_div_mrad
     st.sidebar.info(f"🔒 Locked to diffraction limit: **{divergence_mrad:.3f} mrad**")
 else:
-    # Unlock for manual input, but physically block numbers below the limit
     divergence_mrad = st.sidebar.number_input(
         "Manual Beam Divergence (mrad)", 
         min_value=min_div_mrad,
