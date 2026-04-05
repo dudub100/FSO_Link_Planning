@@ -197,4 +197,102 @@ if col1.button("Set Site A on Click", type="primary" if st.session_state.click_m
 if col2.button("Set Site B on Click", type="primary" if st.session_state.click_mode == 'B' else "secondary"):
     st.session_state.click_mode = 'B'
 
-m = folium.Map(location=[mid_lat, mid_lon], zoom
+m = folium.Map(location=[mid_lat, mid_lon], zoom_start=13)
+folium.Marker(st.session_state.site_a, popup="Site A", icon=folium.Icon(color="green")).add_to(m)
+folium.Marker(st.session_state.site_b, popup="Site B", icon=folium.Icon(color="red")).add_to(m)
+folium.PolyLine([st.session_state.site_a, st.session_state.site_b], color="blue", weight=2.5).add_to(m)
+map_data = st_folium(m, height=400, width=1200)
+
+if map_data.get("last_clicked"):
+    clicked_lat, clicked_lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
+    if st.session_state.click_mode == 'A': st.session_state.site_a = (clicked_lat, clicked_lon)
+    else: st.session_state.site_b = (clicked_lat, clicked_lon)
+    st.rerun()
+
+# ==========================================
+# 5. CORE CALCULATIONS
+# ==========================================
+distance_km = haversine(lat_a, lon_a, lat_b, lon_b)
+
+geo_loss = calc_geo_loss(distance_km, tx_apt, rx_apt, divergence_mrad)
+gas_loss = -(GAS_ATTEN_DB_KM * distance_km)
+scint_margin = 0.0 if "Femtosecond" in modulation else calc_scintillation_margin(distance_km, height_m)
+
+rx_thresh = RX_SENSITIVITY[capacity]
+clear_air_rx = tx_power + geo_loss + gas_loss
+clear_air_margin = clear_air_rx - rx_thresh - scint_margin
+
+st.markdown("---")
+st.header("1. Clear Air Link Budget")
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Distance", f"{distance_km:.2f} km")
+col2.metric("Geometric + Gas Loss", f"{(geo_loss + gas_loss):.1f} dB")
+col3.metric("Scintillation Penalty", f"{-scint_margin:.1f} dB")
+col4.metric("Clear Air Margin", f"{clear_air_margin:.1f} dB")
+
+# ==========================================
+# 6. ITU & METAR WEATHER ROUTINES
+# ==========================================
+st.header("2. ITU-R & Historical METAR Availability")
+
+with st.spinner(f"Fetching 3 years of historical visibility data for {icao_code}..."):
+    vis_data = fetch_metar_visibility(icao_code)
+
+if vis_data is None:
+    st.error(f"Failed to retrieve visibility data for ICAO: {icao_code}. Weather analysis unavailable.")
+else:
+    results = []
+    for avail in AVAILABILITIES:
+        # Rain Model
+        rain_rate = get_itu_rain_rate(mid_lat, mid_lon, avail)
+        rain_loss = -calc_rain_loss(rain_rate, distance_km)
+        
+        # Fog Model
+        vis_km = get_percentile_visibility(vis_data, avail)
+        fog_loss = -calc_fog_loss(vis_km, distance_km)
+        
+        worst_loss = min(rain_loss, fog_loss)
+        total_rx = clear_air_rx + worst_loss - scint_margin
+        margin = total_rx - rx_thresh
+        
+        results.append({
+            "Availability (%)": avail,
+            "ITU Rain Rate (mm/hr)": f"{rain_rate:.2f}",
+            "Rain Loss (dB)": f"{rain_loss:.1f}",
+            "METAR Vis (km)": f"{vis_km:.3f}",
+            "Fog Loss (dB)": f"{fog_loss:.1f}",
+            "Rx Power (dBm)": f"{total_rx:.1f}",
+            "Margin (dB)": f"{margin:.1f}",
+            "Status": "✅ UP" if margin >= 0 else "❌ DOWN"
+        })
+
+    st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+
+# ==========================================
+# 7. ELEVATION PROFILE
+# ==========================================
+st.header("3. Topographical Clearance")
+with st.spinner("Fetching elevation data from Open-Elevation..."):
+    elevations, lats, lons = get_elevation_profile(lat_a, lon_a, lat_b, lon_b)
+
+dist_array = np.linspace(0, distance_km, len(elevations))
+los_line = np.linspace(elevations[0] + height_m, elevations[-1] + height_m, len(elevations))
+
+fig, ax = plt.subplots(figsize=(10, 3))
+ax.fill_between(dist_array, 0, elevations, color='saddlebrown', alpha=0.5, label='Terrain')
+ax.plot(dist_array, los_line, color='red', linewidth=2, label='Optical LOS')
+ax.plot([0, 0], [elevations[0], elevations[0] + height_m], color='black', linewidth=3)
+ax.plot([distance_km, distance_km], [elevations[-1], elevations[-1] + height_m], color='black', linewidth=3)
+
+if np.any((los_line - elevations) < 0): 
+    st.error("⚠️ Terrain blocks the optical path.")
+else: 
+    st.success("✅ Path is clear of terrain.")
+
+ax.set_xlim(0, distance_km)
+ax.set_ylim(min(elevations) - 10, max(max(elevations), max(los_line)) + 20)
+ax.set_xlabel("Distance (km)")
+ax.set_ylabel("Elevation (m)")
+ax.legend()
+ax.grid(True, alpha=0.3)
+st.pyplot(fig)
